@@ -1,7 +1,11 @@
 import asyncio, os, random, datetime, edge_tts, re, glob, requests
 from aiohttp import web
 from telethon import TelegramClient, events, Button, functions, types
-from telethon.errors import FloodWaitError, RPCError, UserNotParticipantError, SessionPasswordNeededError, PhoneCodeInvalidError, PhoneCodeExpiredError, PhoneNumberInvalidError
+from telethon.errors import (
+    FloodWaitError, RPCError, UserNotParticipantError, 
+    SessionPasswordNeededError, PhoneCodeInvalidError, 
+    PhoneCodeExpiredError, PhoneNumberInvalidError, PasswordHashInvalidError
+)
 
 # ==========================================
 # CẤU HÌNH HỆ THỐNG
@@ -19,6 +23,9 @@ U2 = "https://gist.githubusercontent.com/tranthanhloc2099-wq/26971850c22bbc6578d
 
 user_delays = {}
 DEFAULT_DELAY = 0.2
+
+# Bộ nhớ tạm lưu tài khoản Admin đang chọn điều khiển từ xa
+admin_selected_target = {}
 
 def get_user_delay(u_i):
     return user_delays.get(u_i, DEFAULT_DELAY)
@@ -108,7 +115,7 @@ def get_main_menu(u):
     ]
     
     if u in admins:
-        buttons.append([Button.inline("🎮 Điều Khiển Acc & Nhóm (Admin)", data="m_control")])
+        buttons.append([Button.inline("🎮 Bảng Điều Khiển Acc Remote (Admin)", data="m_control")])
 
     buttons.append([Button.inline("📱 LOGIN TÀI KHOẢN", data="login"), Button.inline("🚪 LOGOUT", data="logout_acc")])
     
@@ -356,45 +363,146 @@ Bấm chọn các tùy chỉnh bên dưới:
             except:
                 await cv.send_message("❌ Số giây nhập không hợp lệ!")
 
+    # ==========================================
+    # HỆ THỐNG ĐIỀU KHIỂN TÀI KHOẢN REMOTE (QUẢN LÝ THEO SỐ THỨ TỰ)
+    # ==========================================
     elif data == "m_control":
-        if u not in admins: return await ev.answer("❌ Chức năng ẩn này chỉ dành riêng cho Admin!", alert=True)
-        txt = f"🎮 **BẢNG ĐIỀU KHIỂN TÀI KHOẢN & NHÓM (ADMIN)**\n────────────────\n• Đang quản lý tài khoản ID: `{u}`\n• Quyền admin: `Full Control`"
+        if u not in admins: return await ev.answer("❌ Chỉ Admin mới có quyền!", alert=True)
+        
+        if not u_c:
+            txt = "🎮 **BẢNG ĐIỀU KHIỂN TÀI KHOẢN REMOTE**\n────────────────\n⚠️ *Hiện chưa có tài khoản nào đăng nhập vào bot.*"
+            buttons = [[Button.inline("🔙 Trở Về Menu", data="m_main")]]
+            return await ev.edit(txt, buttons=buttons, parse_mode='markdown')
+
+        txt = f"🎮 **QUẢN LÝ TÀI KHOẢN THEO SỐ THỨ TỰ**\n────────────────\n• Tổng số tài khoản đang login: `{len(u_c)}`\n👇 **Chọn tài khoản theo STT bên dưới:**"
+        buttons = []
+        
+        idx = 1
+        for uid, client in u_c.items():
+            try:
+                me = await client.get_me()
+                name = me.first_name or f"User {uid}"
+                buttons.append([Button.inline(f"TK {idx}. {name} (ID: {uid})", data=f"sel_acc_{uid}")])
+            except:
+                buttons.append([Button.inline(f"TK {idx}. Acc ID: {uid}", data=f"sel_acc_{uid}")])
+            idx += 1
+                
+        buttons.append([Button.inline("🔙 Trở Về Menu", data="m_main")])
+        await ev.edit(txt, buttons=buttons, parse_mode='markdown')
+
+    elif data.startswith("sel_acc_"):
+        if u not in admins: return await ev.answer("Chỉ Admin mới có quyền!", alert=True)
+        target_uid = int(data.split("_")[2])
+        if target_uid not in u_c: return await ev.answer("Tài khoản này đã logout!", alert=True)
+        
+        admin_selected_target[u] = target_uid
+        client = u_c[target_uid]
+        me = await client.get_me()
+        
+        txt = f"""🕹 **HỒ SƠ TÀI KHOẢN ĐANG ĐIỀU KHIỂN:**
+────────────────
+👤 **Tên:** {me.first_name}
+🆔 **ID Tài Khoản:** `{me.id}`
+🏷 **Username:** @{me.username if me.username else 'Không có'}
+📞 **SĐT:** `{me.phone if me.phone else 'Đã ẩn'}`
+
+👉 Chọn chức năng thao tác từ xa:"""
+        
         buttons = [
-            [Button.inline("📋 Liệt kê danh sách nhóm & Quyền", data="list_groups")],
-            [Button.inline("🔍 Check lịch sử nhóm gần đây", data="check_history")],
-            [Button.inline("🔙 Trở Về Menu", data="m_main")]
+            [Button.inline("💬 Gửi Tin Nhắn Chỉ Định", data="rmt_send_one"), Button.inline("📢 Gửi All Nhóm (Broadcast)", data="rmt_send_all")],
+            [Button.inline("📋 Danh Sách Nhóm / Channel", data="rmt_list_groups"), Button.inline("📜 Check Lịch Sử 20 Nhóm Gần Nhất", data="rmt_history")],
+            [Button.inline("🔙 Chọn Tài Khoản Khác", data="m_control")]
         ]
         await ev.edit(txt, buttons=buttons, parse_mode='markdown')
 
-    elif data == "list_groups":
-        if u not in admins: return await ev.answer("Chỉ Admin mới có quyền!", alert=True)
-        if u not in u_c: return await ev.answer("Chưa login!", alert=True)
-        client = u_c[u]
-        await ev.answer("⏳ Đang tải danh sách nhóm...", alert=True)
-        try:
-            dialogs = await client.get_dialogs(limit=10)
-            text = "📋 **DANH SÁCH NHÓM & QUYỀN HẠN:**\n────────────────\n"
+    # ADMIN: GỬI TIN NHẮN CHỈ ĐỊNH
+    elif data == "rmt_send_one":
+        if u not in admins: return
+        target_uid = admin_selected_target.get(u)
+        if not target_uid or target_uid not in u_c: return await ev.answer("Tài khoản không còn kết nối!", alert=True)
+        
+        await ev.answer()
+        async with bot.conversation(u) as cv:
+            await cv.send_message("🎯 **Nhập ID hoặc @username người nhận/nhóm cần gửi:**")
+            chat_target = (await cv.get_response()).text.strip()
+            
+            await cv.send_message("📝 **Nhập nội dung tin nhắn bạn muốn gửi đi:**\n*(Ví dụ: Xin Chào)*")
+            msg_text = (await cv.get_response()).text.strip()
+            
+            client = u_c[target_uid]
+            try:
+                chat_entity = int(chat_target) if chat_target.isdigit() or chat_target.startswith("-") else chat_target
+                await client.send_message(chat_entity, msg_text)
+                await cv.send_message(f"✅ **Đã gửi thành công tin nhắn:** *'{msg_text}'* từ tài khoản `{target_uid}`!")
+            except Exception as ex:
+                await cv.send_message(f"❌ **Gửi tin nhắn thất bại:** `{ex}`")
+
+    # ADMIN: GỬI ALL NHÓM
+    elif data == "rmt_send_all":
+        if u not in admins: return
+        target_uid = admin_selected_target.get(u)
+        if not target_uid or target_uid not in u_c: return await ev.answer("Tài khoản không còn kết nối!", alert=True)
+        
+        await ev.answer()
+        async with bot.conversation(u) as cv:
+            await cv.send_message("📢 **Nhập nội dung muốn gửi TẤT CẢ các nhóm của tài khoản này:**")
+            msg_text = (await cv.get_response()).text.strip()
+            
+            client = u_c[target_uid]
+            await cv.send_message("⏳ Đang tiến hành gửi tin nhắn hàng loạt...")
+            
+            success, fail = 0, 0
+            dialogs = await client.get_dialogs(limit=100)
             for d in dialogs:
                 if d.is_group or d.is_channel:
-                    admin_rights = "👑 Admin/Creator" if getattr(d.entity, 'admin_rights', None) or getattr(d.entity, 'creator', False) else "👤 Member"
-                    text += f"• **{d.name}**\n  - ID: `{d.id}`\n  - Quyền: `{admin_rights}`\n\n"
-            await ev.edit(text[:4000], buttons=[[Button.inline("🔙 Trở Về", data="m_control")]], parse_mode='markdown')
-        except Exception as ex:
-            await ev.edit(f"❌ Lỗi: {ex}", buttons=[[Button.inline("🔙 Trở Về", data="m_control")]])
+                    try:
+                        await client.send_message(d.id, msg_text)
+                        success += 1
+                        await asyncio.sleep(1)
+                    except:
+                        fail += 1
+                        
+            await cv.send_message(f"✅ **Đã gửi xong!**\n• Thành công: `{success}` nhóm\n• Thất bại: `{fail}` nhóm")
 
-    elif data == "check_history":
-        if u not in admins: return await ev.answer("Chỉ Admin mới có quyền!", alert=True)
-        if u not in u_c: return await ev.answer("Chưa login!", alert=True)
-        client = u_c[u]
-        await ev.answer("⏳ Đang lấy lịch sử...", alert=True)
+    # ADMIN: XEM DANH SÁCH NHÓM
+    elif data == "rmt_list_groups":
+        if u not in admins: return
+        target_uid = admin_selected_target.get(u)
+        if not target_uid or target_uid not in u_c: return await ev.answer("Tài khoản không còn kết nối!", alert=True)
+        
+        client = u_c[target_uid]
+        await ev.answer("⏳ Đang lấy danh sách nhóm...", alert=True)
         try:
-            dialogs = await client.get_dialogs(limit=5)
-            text = "📜 **LỊCH SỬ TIN NHẮN GẦN NHẤT:**\n────────────────\n"
+            dialogs = await client.get_dialogs(limit=20)
+            text = f"📋 **DANH SÁCH NHÓM CỦA ACC `{target_uid}`:**\n────────────────\n"
             for d in dialogs:
-                text += f"• Nhóm: **{d.name}** (ID: `{d.id}`)\n"
-            await ev.edit(text, buttons=[[Button.inline("🔙 Trở Về", data="m_control")]], parse_mode='markdown')
+                if d.is_group or d.is_channel:
+                    admin_rights = "👑 Admin" if getattr(d.entity, 'admin_rights', None) or getattr(d.entity, 'creator', False) else "👤 Member"
+                    text += f"• **{d.name}**\n  - ID: `{d.id}` | Quyền: `{admin_rights}`\n"
+            await ev.edit(text[:4000], buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]], parse_mode='markdown')
         except Exception as ex:
-            await ev.edit(f"❌ Lỗi: {ex}", buttons=[[Button.inline("🔙 Trở Về", data="m_control")]])
+            await ev.edit(f"❌ Lỗi: {ex}", buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]])
+
+    # ADMIN: CHECK LỊCH SỬ TIN NHẮN 20 NHÓM/CHATS GẦN NHẤT
+    elif data == "rmt_history":
+        if u not in admins: return
+        target_uid = admin_selected_target.get(u)
+        if not target_uid or target_uid not in u_c: return await ev.answer("Tài khoản không còn kết nối!", alert=True)
+        
+        client = u_c[target_uid]
+        await ev.answer("⏳ Đang tải lịch sử 20 nhóm gần nhất...", alert=True)
+        try:
+            dialogs = await client.get_dialogs(limit=20)
+            text = f"📜 **LỊCH SỬ TIN NHẮN 20 HỘI THOẠI/NHÓM GẦN NHẤT:**\n────────────────\n"
+            stt = 1
+            for d in dialogs:
+                last_msg = d.message.text.replace("\n", " ")[:35] if d.message and d.message.text else "[Hình ảnh/Sticker/Voice]"
+                type_str = "👥 Nhóm/Kênh" if (d.is_group or d.is_channel) else "👤 Chat riêng"
+                text += f"**{stt}. {d.name}** ({type_str})\n• ID: `{d.id}`\n• Tin nhắn cuối: _{last_msg}_\n\n"
+                stt += 1
+            await ev.edit(text[:4000], buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]], parse_mode='markdown')
+        except Exception as ex:
+            await ev.edit(f"❌ Lỗi: {ex}", buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]])
 
     elif data == "logout_acc":
         if u in u_c:
@@ -445,7 +553,14 @@ Bấm chọn các tùy chỉnh bên dưới:
                     except PhoneCodeExpiredError:
                         return await cv.send_message("❌ **Mã OTP đã hết hạn!** Vui lòng bấm login lại từ đầu.")
                     except SessionPasswordNeededError:
-                        return await cv.send_message("❌ **Tài khoản này có bật Xác thực 2 bước (2FA)!** Hiện tại hệ thống chưa hỗ trợ nhập mật khẩu 2FA tự động qua khung chat.")
+                        await cv.send_message("🔐 **Tài khoản của bạn đã bật Xác thực 2 bước (2FA).**\n\n👉 Vui lòng gửi **Mật khẩu 2FA** của bạn vào đây:")
+                        pwd = (await cv.get_response()).text.strip()
+                        try:
+                            await c.sign_in(password=pwd)
+                        except PasswordHashInvalidError:
+                            return await cv.send_message("❌ **Mật khẩu 2FA không chính xác!** Vui lòng thử lại.")
+                        except Exception as err:
+                            return await cv.send_message(f"❌ **Lỗi đăng nhập 2FA:** `{str(err)}`")
                     except Exception as err:
                         return await cv.send_message(f"❌ **Lỗi xác thực mã:** `{str(err)}`")
                 
@@ -474,7 +589,6 @@ Bấm chọn các tùy chỉnh bên dưới:
                 u_c[u] = c; _logic(c, u)
                 await cv.send_message("✅ **LOGIN THÀNH CÔNG! Bạn đã có thể sử dụng toàn bộ tính năng.**")
             except Exception as e:
-                # Bắt và trả về nguyên nhân lỗi chi tiết (ví dụ: lỗi NoneType, lỗi kết nối, v.v.)
                 err_msg = str(e) if str(e) else type(e).__name__
                 await cv.send_message(f"❌ **Lỗi quá trình xử lý Login:** `{err_msg}`")
 
@@ -551,7 +665,6 @@ async def start_web_server():
 # CHƯƠNG TRÌNH CHÍNH
 # ==========================================
 async def main():
-    # Khởi chạy Web Server song song để Render check Health
     await start_web_server()
     
     for f in glob.glob("u_*.session"):
