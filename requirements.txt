@@ -1,4 +1,9 @@
 telethon
+aiohttp
 edge-tts
 requests
-aiohttp
+aiofiles
+pystyle
+colorama
+curl-cffi
+
