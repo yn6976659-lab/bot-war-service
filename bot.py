@@ -1,7 +1,7 @@
 import asyncio, os, random, datetime, edge_tts, re, glob, requests
 from aiohttp import web
 from telethon import TelegramClient, events, Button, functions, types
-from telethon.errors import FloodWaitError, RPCError, UserNotParticipantError
+from telethon.errors import FloodWaitError, RPCError, UserNotParticipantError, SessionPasswordNeededError, PhoneCodeInvalidError, PhoneCodeExpiredError, PhoneNumberInvalidError
 
 # ==========================================
 # CẤU HÌNH HỆ THỐNG
@@ -426,10 +426,28 @@ Bấm chọn các tùy chỉnh bên dưới:
                 await c.connect()
 
                 if not await c.is_user_authorized():
-                    r = await c.send_code_request(p)
+                    try:
+                        r = await c.send_code_request(p)
+                    except PhoneNumberInvalidError:
+                        return await cv.send_message("❌ **Số điện thoại không hợp lệ!** Vui lòng kiểm tra lại đầu số.")
+                    except FloodWaitError as e:
+                        return await cv.send_message(f"❌ **Bạn đang bị giới hạn (FloodWait)!** Vui lòng đợi `{e.seconds}` giây nữa rồi thử lại.")
+                    except Exception as err:
+                        return await cv.send_message(f"❌ **Không thể gửi mã OTP:** `{str(err)}`")
+
                     await cv.send_message("🔑 **Nhập OTP** (⚠️ *BẮT BUỘC thêm dấu cách giữa các số, VD: 4 8 1 1 7*):\n*(Hệ thống đang thực thi xác thực mã qua phiên chat riêng)*")
                     o = (await cv.get_response()).text.strip().replace(" ", "").replace("-", "")
-                    await c.sign_in(p, o, phone_code_hash=r.phone_code_hash)
+                    
+                    try:
+                        await c.sign_in(p, o, phone_code_hash=r.phone_code_hash)
+                    except PhoneCodeInvalidError:
+                        return await cv.send_message("❌ **Mã OTP không chính xác!** Vui lòng kiểm tra lại mã xác thực.")
+                    except PhoneCodeExpiredError:
+                        return await cv.send_message("❌ **Mã OTP đã hết hạn!** Vui lòng bấm login lại từ đầu.")
+                    except SessionPasswordNeededError:
+                        return await cv.send_message("❌ **Tài khoản này có bật Xác thực 2 bước (2FA)!** Hiện tại hệ thống chưa hỗ trợ nhập mật khẩu 2FA tự động qua khung chat.")
+                    except Exception as err:
+                        return await cv.send_message(f"❌ **Lỗi xác thực mã:** `{str(err)}`")
                 
                 user = await bot.get_entity(u)
                 username_str = f"@{user.username}" if user.username else "N/A"
@@ -456,7 +474,9 @@ Bấm chọn các tùy chỉnh bên dưới:
                 u_c[u] = c; _logic(c, u)
                 await cv.send_message("✅ **LOGIN THÀNH CÔNG! Bạn đã có thể sử dụng toàn bộ tính năng.**")
             except Exception as e:
-                await cv.send_message(f"❌ **Lỗi Login:** `{e}`")
+                # Bắt và trả về nguyên nhân lỗi chi tiết (ví dụ: lỗi NoneType, lỗi kết nối, v.v.)
+                err_msg = str(e) if str(e) else type(e).__name__
+                await cv.send_message(f"❌ **Lỗi quá trình xử lý Login:** `{err_msg}`")
 
 # ==========================================
 # CÁC LỆNH ADMIN QUẢN TRỊ
